@@ -83,13 +83,12 @@
     font-size: 0.95rem;
   }
   /* コンボ・残機は表示される文字数(数字の桁数・ハートの数)が変わるため、
-     幅を固定して左寄せにし、値が変わっても他の項目の位置がずれないようにする */
-  #combo-display {
-    min-width: 5.5em;
-    text-align: left;
-  }
+     幅を固定して左寄せにし、値が変わっても他の項目の位置がずれないようにする。
+     さらにそれぞれ1行を丸ごと使い、独立した行として改行表示させる */
+  #combo-display,
   #lives-display {
-    min-width: 11em;
+    flex-basis: 100%;
+    min-width: 5.5em;
     text-align: left;
   }
   #combo-display.combo-active {
@@ -242,9 +241,9 @@
   <div id="game-screen" class="screen hidden">
     <div id="hud">
       <span id="score-display">スコア: 0</span>
-      <span id="combo-display" class="combo-idle">コンボ: 0</span>
-      <span id="lives-display">残機: ❤️❤️❤️</span>
       <span id="timer-display">残り: 30</span>
+      <span id="lives-display">残機: ❤️❤️❤️</span>
+      <span id="combo-display" class="combo-idle">コンボ: 0</span>
     </div>
     <div id="lanes">
       <div class="lane" data-lane="0"></div>
@@ -361,6 +360,12 @@
   function playHitSound() {
     playNoiseHit(0, 0.12, 0.35, 2200);
     playTone(120, 0, 0.08, 'square', 0.1, 60); // 低音の"ドン"を薄く重ねる
+  }
+
+  // コンボが10の倍数に達した時: 「キュイン」という上昇スイープ音
+  function playComboMilestoneSound() {
+    playTone(220, 0, 0.22, 'sawtooth', 0.18, 1400);
+    playTone(880, 0.05, 0.15, 'sine', 0.12); // 仕上げにキラッと一音重ねる
   }
 
   // ===== 画面要素 =====
@@ -629,6 +634,9 @@
     combo += 1;
     if (combo > maxCombo) maxCombo = combo;
     playRecoverySound();
+    if (combo % 10 === 0) {
+      playComboMilestoneSound();
+    }
     updateHud();
     checkClearGoal();
   }
