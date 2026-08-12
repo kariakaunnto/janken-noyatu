@@ -516,6 +516,10 @@
       el.style.transition = `top ${fallDuration}ms linear`;
       lanes[laneIndex].appendChild(el);
 
+      // 端末によっては、追加した要素が一度も描画されないまま次の処理に進んでしまうことがあるため、
+      // ここで強制的にレイアウトを確定させ、必ず1回描画されるようにする
+      void el.offsetWidth;
+
       // 次のフレームでtopを100%にしてCSSトランジションで落下させる
       requestAnimationFrame(() => { el.style.top = '100%'; });
 
