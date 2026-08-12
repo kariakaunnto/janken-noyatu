@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>ジャンケン迎撃タイムアタック</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { overflow-x: hidden; }
+  body {
+    margin: 0;
+    font-family: "Hiragino Sans", "Yu Gothic", sans-serif;
+    background: #1e2230;
+    color: #fff;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    min-height: 100dvh; /* スマホでアドレスバーの出没があっても高さがガタつかないようにする */
+    padding: 0.75rem;
+  }
+  #app {
+    width: 480px;
+    max-width: 100%;
+  }
+  .screen { text-align: center; }
+  .hidden { display: none; }
+
+  h1 { font-size: 1.4rem; margin-bottom: 0.5rem; }
+  p.desc { color: #bbb; margin-bottom: 1.5rem; font-size: 0.9rem; }
+
+  button {
+    /* ダブルタップでのブラウザ拡大ジェスチャーを無効化し、連打時にタップが取りこぼされないようにする */
+    touch-action: manipulation;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  .speed-option {
+    margin: 0 0 1.2rem;
+    padding: 0.8rem 1rem;
+    background: #262b45;
+    border-radius: 8px;
+    text-align: left;
+  }
+  .speed-option label {
+    display: block;
+    font-size: 0.9rem;
+    margin-bottom: 0.5rem;
+    color: #ddd;
+  }
+  .speed-option input[type="range"] {
+    width: 100%;
+    touch-action: manipulation;
+  }
+
+  .mode-select button {
+    display: block;
+    width: 100%;
+    margin: 0.5rem 0;
+    padding: 0.9rem;
+    font-size: 1rem;
+    border: none;
+    border-radius: 8px;
+    background: #3a4166;
+    color: #fff;
+    cursor: pointer;
+  }
+  /* マウスなど実際にホバー可能な入力機器の時だけ:hoverを効かせる。
+     スマホ(タッチ)は hover:none のためこの中に入らず、1回目のタップがホバー扱いで
+     消費されて反応が悪く見える問題(iOS Safariでよく起きる)を避けられる */
+  @media (hover: hover) and (pointer: fine) {
+    .mode-select button:hover { background: #4c5590; }
+  }
+  .mode-select button:active { background: #6a74b8; }
+
+  #hud {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 0.3rem 1rem;
+    padding: 0.5rem 0.2rem;
+    font-size: 0.95rem;
+  }
+  /* コンボ・残機は表示される文字数(数字の桁数・ハートの数)が変わるため、
+     幅を固定して左寄せにし、値が変わっても他の項目の位置がずれないようにする */
+  #combo-display {
+    min-width: 5.5em;
+    text-align: left;
+  }
+  #lives-display {
+    min-width: 11em;
+    text-align: left;
+  }
+  #combo-display.combo-active {
+    color: #ffd166;
+    font-weight: bold;
+  }
+
+  #result-text { white-space: pre-line; }
+
+  #lanes {
+    display: flex;
+    gap: 8px;
+    height: min(360px, 52vh);
+    background: #2a1a45;
+    border-radius: 8px;
+    position: relative;
+    overflow: hidden;
+    border: 2px solid #3a4166;
+  }
+  .lane {
+    flex: 1;
+    position: relative;
+    border-right: 1px dashed #2a2f45;
+  }
+  .lane:last-child { border-right: none; }
+
+  #judge-line {
+    position: absolute;
+    left: 0; right: 0;
+    bottom: 0; /* 枠の本当の下端と一致させる(隙間があると「枠の外に見える」ように誤解されるため) */
+    height: 2px;
+    background: #ff5e5e;
+    opacity: 0.6;
+  }
+
+  .falling-hand {
+    position: absolute;
+    left: 50%;
+    top: 0;
+    transform: translate(-50%, 0);
+  }
+  .falling-hand img {
+    display: block;
+    width: 2.6rem;
+    height: 2.6rem;
+    object-fit: contain;
+  }
+  .falling-hand.defeated {
+    /* デバッグ用: 透明にして消すのではなく、倒された瞬間が分かるようグレースケールにする */
+    filter: grayscale(1);
+    animation: pop 0.25s forwards;
+  }
+  @keyframes pop {
+    to { transform: translate(-50%, 0) scale(1.8); }
+  }
+
+  /* 残機が減った(ダメージを受けた)時、敵ではなく画面の端が一瞬赤く光る */
+  #damage-flash {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 999;
+    opacity: 0;
+  }
+  #damage-flash.active {
+    animation: damageFlash 0.35s ease-out;
+  }
+  @keyframes damageFlash {
+    0% { box-shadow: inset 0 0 0 0 rgba(255, 59, 59, 0); opacity: 1; }
+    25% { box-shadow: inset 0 0 90px 25px rgba(255, 59, 59, 0.85); opacity: 1; }
+    100% { box-shadow: inset 0 0 90px 25px rgba(255, 59, 59, 0); opacity: 0; }
+  }
+
+  #input-buttons {
+    display: flex;
+    gap: 8px;
+    margin-top: 1rem;
+  }
+  #input-buttons button {
+    flex: 1;
+    padding: 1rem 0;
+    font-size: 1.6rem;
+    border: none;
+    border-radius: 8px;
+    background: #3a4166;
+    color: #fff;
+    cursor: pointer;
+    transition: background-color 0.08s, transform 0.08s;
+  }
+  #input-buttons button:active,
+  #input-buttons button.pressed {
+    background: #6a74b8;
+    transform: scale(0.94);
+  }
+  #input-buttons button img {
+    display: block;
+    width: 2.2rem;
+    height: 2.2rem;
+    margin: 0 auto;
+    object-fit: contain;
+  }
+  #input-buttons .key-label {
+    display: block;
+    font-size: 0.7rem;
+    color: #ccc;
+    margin-top: 0.2rem;
+  }
+
+  #result-screen button {
+    display: block;
+    width: 100%;
+    margin: 0.5rem 0;
+    padding: 0.8rem;
+    font-size: 1rem;
+    border: none;
+    border-radius: 8px;
+    background: #3a4166;
+    color: #fff;
+    cursor: pointer;
+  }
+
+  /* 幅の狭いスマホ向けの調整 */
+  @media (max-width: 380px) {
+    #hud { font-size: 0.8rem; }
+    .falling-hand img { width: 2.1rem; height: 2.1rem; }
+    #input-buttons button { font-size: 1.3rem; padding: 0.8rem 0; }
+    #input-buttons button img { width: 1.9rem; height: 1.9rem; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- スタート画面: モード選択 -->
+  <div id="start-screen" class="screen">
+    <h1>ジャンケン迎撃タイムアタック</h1>
+    <p class="desc">降ってくる手に「勝つ手」を出して迎撃しよう!<br>Zキー=グー / Xキー=チョキ / Cキー=パー(ボタンでも操作可)</p>
+    <div class="speed-option">
+      <label for="speed-slider">敵のスピード: <span id="speed-value">1.0</span>倍</label>
+      <input type="range" id="speed-slider" min="0.2" max="2" step="0.2" value="1">
+    </div>
+    <div class="mode-select">
+      <button data-mode="survival">① サバイバル(30秒間で何体倒せるか)</button>
+      <button data-mode="clear">② 固定数クリア(30体を倒すタイムを競う)</button>
+      <button data-mode="escalate">③ 難易度上昇(ミスするまで無限に加速)</button>
+    </div>
+  </div>
+
+  <!-- ゲーム画面 -->
+  <div id="game-screen" class="screen hidden">
+    <div id="hud">
+      <span id="score-display">スコア: 0</span>
+      <span id="combo-display" class="combo-idle">コンボ: 0</span>
+      <span id="lives-display">残機: ❤️❤️❤️</span>
+      <span id="timer-display">残り: 30</span>
+    </div>
+    <div id="lanes">
+      <div class="lane" data-lane="0"></div>
+      <div class="lane" data-lane="1"></div>
+      <div class="lane" data-lane="2"></div>
+      <div id="judge-line"></div>
+    </div>
+    <div id="input-buttons">
+      <button data-hand="rock"><img src="gu.png" alt="グー"><span class="key-label">Z</span></button>
+      <button data-hand="scissors"><img src="choki.png" alt="チョキ"><span class="key-label">X</span></button>
+      <button data-hand="paper"><img src="pa.png" alt="パー"><span class="key-label">C</span></button>
+    </div>
+  </div>
+
+  <!-- 結果画面 -->
+  <div id="result-screen" class="screen hidden">
+    <h1>結果発表</h1>
+    <p id="result-text" class="desc"></p>
+    <button id="retry-btn">同じモードでもう一度</button>
+    <button id="menu-btn">モード選択に戻る</button>
+  </div>
+
+</div>
+
+<div id="damage-flash"></div>
+
+<script>
+(function () {
+  // ===== 基本データ =====
+  // BEATS[手] = その手に勝てる手(例: rock に勝てるのは paper)
+  const BEATS = { rock: 'paper', scissors: 'rock', paper: 'scissors' };
+  const HAND_IMAGES = { rock: 'gu.png', scissors: 'choki.png', paper: 'pa.png' };
+  const KEY_TO_HAND = { KeyZ: 'rock', KeyX: 'scissors', KeyC: 'paper' };
+  const HAND_LIST = ['rock', 'scissors', 'paper'];
+
+  // ===== 効果音(音声ファイルを使わず、Web Audio APIでその場で音を生成する) =====
+  let audioCtx = null;
+  function getAudioCtx() {
+    if (!audioCtx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      audioCtx = new AC();
+    }
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    return audioCtx;
+  }
+
+  function playTone(freq, startDelay, duration, type, volume, endFreq) {
+    const ctx = getAudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = type;
+    const startTime = ctx.currentTime + startDelay;
+    osc.frequency.setValueAtTime(freq, startTime);
+    if (endFreq) {
+      osc.frequency.exponentialRampToValueAtTime(endFreq, startTime + duration);
+    }
+    gain.gain.setValueAtTime(volume, startTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(startTime);
+    osc.stop(startTime + duration);
+  }
+
+  // 「バシッ」という打撃音: ノイズにローパスフィルターをかけた短い衝撃音
+  function playNoiseHit(startDelay, duration, volume, filterFreq) {
+    const ctx = getAudioCtx();
+    const startTime = ctx.currentTime + startDelay;
+    const bufferSize = Math.ceil(ctx.sampleRate * duration);
+    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+
+    const noise = ctx.createBufferSource();
+    noise.buffer = buffer;
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(filterFreq, startTime);
+    filter.frequency.exponentialRampToValueAtTime(filterFreq * 0.3, startTime + duration);
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(volume, startTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+
+    noise.connect(filter);
+    filter.connect(gain);
+    gain.connect(ctx.destination);
+    noise.start(startTime);
+    noise.stop(startTime + duration);
+  }
+
+  // クリア達成時(モードのゴールを達成した時): 明るい上昇アルペジオ
+  function playClearSound() {
+    playTone(523.25, 0, 0.15, 'sine', 0.2);    // ド
+    playTone(659.25, 0.1, 0.15, 'sine', 0.2);  // ミ
+    playTone(783.99, 0.2, 0.3, 'sine', 0.2);   // ソ
+  }
+
+  // 勝ち(敵を倒した時): 回復っぽい、柔らかく上昇する音
+  function playRecoverySound() {
+    playTone(660, 0, 0.16, 'sine', 0.15);
+    playTone(880, 0.07, 0.22, 'sine', 0.15);
+    playTone(1320, 0.07, 0.22, 'sine', 0.06); // 上に薄く重ねてキラッと感を出す
+  }
+
+  // あいこ: キャンセルっぽい、フラットな短い二連音
+  function playCancelSound() {
+    playTone(300, 0, 0.08, 'square', 0.08);
+    playTone(300, 0.09, 0.08, 'square', 0.08);
+  }
+
+  // 負け(ダメージを受けた時): 「バシッ」という短い打撃音
+  function playHitSound() {
+    playNoiseHit(0, 0.12, 0.35, 2200);
+    playTone(120, 0, 0.08, 'square', 0.1, 60); // 低音の"ドン"を薄く重ねる
+  }
+
+  // ===== 画面要素 =====
+  const startScreen = document.getElementById('start-screen');
+  const gameScreen = document.getElementById('game-screen');
+  const resultScreen = document.getElementById('result-screen');
+  const lanes = document.querySelectorAll('.lane');
+  const scoreDisplay = document.getElementById('score-display');
+  const comboDisplay = document.getElementById('combo-display');
+  const livesDisplay = document.getElementById('lives-display');
+  const timerDisplay = document.getElementById('timer-display');
+  const resultText = document.getElementById('result-text');
+  const speedSlider = document.getElementById('speed-slider');
+  const speedValueDisplay = document.getElementById('speed-value');
+  const damageFlashEl = document.getElementById('damage-flash');
+
+  // ダメージを受けた(残機が減った)時、画面の端を一瞬赤く光らせる
+  function flashDamage() {
+    damageFlashEl.classList.remove('active');
+    void damageFlashEl.offsetWidth; // 連続で被弾した時も毎回最初からアニメーションさせるための強制リフロー
+    damageFlashEl.classList.add('active');
+  }
+
+  speedSlider.addEventListener('input', () => {
+    speedValueDisplay.textContent = parseFloat(speedSlider.value).toFixed(1);
+  });
+
+  // ===== ゲーム状態 =====
+  let mode = 'survival';
+  let score = 0;
+  let lives = 3;
+  let combo = 0;      // 現在の連続成功回数(ミスすると0に戻る)
+  let maxCombo = 0;   // このプレイ中の最大コンボ数
+  let missCount = 0;  // このプレイ中にミスした回数
+  let activeHands = [];   // 現在落下中の手
+  let laneOccupied = [];  // 各レーンに敵がいるか(true/false)。重複出現を防ぐために使う
+  let spawnTimerId = null;
+  let tickTimerId = null;
+  let running = false;
+
+  // モードごとの設定
+  let speedMultiplier = 1;   // タイトル画面のスライダーで選ぶ速度倍率(0.2〜2.0)
+  let fallDuration = 2200;   // 落下にかかるミリ秒(小さいほど速い)
+  let spawnInterval = 900;   // 出現間隔
+  let elapsedMs = 0;         // 経過時間
+  let survivalTimeLeft = 30; // サバイバル用の残り秒
+  const CLEAR_GOAL = 30;
+
+  function showScreen(target) {
+    [startScreen, gameScreen, resultScreen].forEach(s => s.classList.add('hidden'));
+    target.classList.remove('hidden');
+  }
+
+  // ===== モード選択 =====
+  document.querySelectorAll('.mode-select button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      mode = btn.dataset.mode;
+      startGame();
+    });
+  });
+
+  document.getElementById('retry-btn').addEventListener('click', startGame);
+  document.getElementById('menu-btn').addEventListener('click', () => showScreen(startScreen));
+
+  // ===== ゲーム開始 =====
+  function startGame() {
+    // 状態リセット
+    score = 0;
+    lives = 10;
+    combo = 0;
+    maxCombo = 0;
+    missCount = 0;
+    activeHands = [];
+    laneOccupied = lanes.length ? new Array(lanes.length).fill(false) : [];
+    elapsedMs = 0;
+    survivalTimeLeft = 30;
+    speedMultiplier = parseFloat(speedSlider.value); // タイトル画面のスライダーで選んだ速度倍率
+    fallDuration = ((mode === 'clear') ? 1800 : 2200) / speedMultiplier;
+    spawnInterval = (mode === 'clear') ? 800 : 900;
+    running = true;
+
+    lanes.forEach(l => l.innerHTML = '');
+    updateHud();
+    showScreen(gameScreen);
+
+    // ゲーム画面が「非表示→表示」になった直後の同じフレームで1体目を出現させると、
+    // ブラウザがまだその表示を1度も描画できておらず、1体目だけ落下アニメーションが
+    // 正しく効かない(見えない)ことがあるため、1フレーム待ってから出現させる
+    requestAnimationFrame(() => {
+      spawnLoop();
+    });
+    tickTimerId = setInterval(tick, 100);
+  }
+
+  function endGame(message) {
+    running = false;
+    clearTimeout(spawnTimerId);
+    clearInterval(tickTimerId);
+    // ゲーム終了時にまだ落下中だった敵は、タイマーを止めるだけでなく
+    // 要素そのものもDOMから消しておく(消し忘れるとDOMに残り続けてしまう)
+    activeHands.forEach(h => {
+      clearTimeout(h.missTimerId);
+      h.el.remove();
+    });
+    activeHands = [];
+    resultText.textContent = message;
+    showScreen(resultScreen);
+  }
+
+  // ===== 出現ループ =====
+  function spawnLoop() {
+    if (!running) return;
+    spawnHand();
+
+    // 難易度上昇モードは倒した数に応じて加速
+    if (mode === 'escalate') {
+      const speedUp = Math.floor(score / 5) * 80;
+      spawnInterval = Math.max(300, 900 - speedUp);
+      fallDuration = Math.max(900, 2200 - speedUp) / speedMultiplier;
+    }
+
+    // 固定数クリアは目標数を出し切ったら出現ストップ
+    if (mode === 'clear' && score + activeHands.length >= CLEAR_GOAL) {
+      return; // これ以上出現させない
+    }
+
+    spawnTimerId = setTimeout(spawnLoop, spawnInterval);
+  }
+
+  function spawnHand() {
+    // 既に敵がいるレーンには出現させない(重なって見えなくなるのを防ぐ)
+    const freeLanes = [];
+    laneOccupied.forEach((occupied, idx) => { if (!occupied) freeLanes.push(idx); });
+    if (freeLanes.length === 0) return; // 全レーンが埋まっていたら今回は出現させない
+
+    const laneIndex = freeLanes[Math.floor(Math.random() * freeLanes.length)];
+    // 空きレーンを確認した時点でこのレーンを予約しておく
+    // (0.25秒待つ間に、別のタイミングのspawnHand()が同じレーンを空きと判断して
+    // 二重に出現させてしまうのを防ぐため)
+    laneOccupied[laneIndex] = true;
+
+    // レーンが落ち着くまで0.25秒待ってから、実際に敵を出現させる
+    setTimeout(() => {
+      if (!running) return; // 待っている間にゲームが終わっていたら出現させない
+
+      const hand = HAND_LIST[Math.floor(Math.random() * HAND_LIST.length)];
+      const el = document.createElement('div');
+      el.className = 'falling-hand';
+      const img = document.createElement('img');
+      img.src = HAND_IMAGES[hand];
+      img.alt = hand;
+      el.appendChild(img);
+      el.style.transition = `top ${fallDuration}ms linear`;
+      lanes[laneIndex].appendChild(el);
+
+      // 次のフレームでtopを100%にしてCSSトランジションで落下させる
+      requestAnimationFrame(() => { el.style.top = '100%'; });
+
+      // spawnTime/fallDurationを記録しておき、当たり判定の優先度は
+      // getBoundingClientRect(強制的に再描画計算をさせる重い処理)を使わず、
+      // 経過時間だけで計算できるようにする(連打時の描画詰まり対策)
+      const record = { hand, el, laneIndex, defeated: false, spawnTime: performance.now(), fallDuration };
+      record.missTimerId = setTimeout(() => onMiss(record), fallDuration);
+      activeHands.push(record);
+    }, 250);
+  }
+
+  // ===== 入力処理 =====
+  // 手(hand)の名前からボタン要素を引けるようにしておく(キー入力時の色変化に使う)
+  const handButtons = {};
+  document.querySelectorAll('#input-buttons button').forEach(btn => {
+    handButtons[btn.dataset.hand] = btn;
+    btn.addEventListener('click', () => {
+      flashButton(btn.dataset.hand);
+      tryDefeat(btn.dataset.hand);
+    });
+  });
+  document.addEventListener('keydown', (e) => {
+    if (!running) return;
+    const hand = KEY_TO_HAND[e.code];
+    if (hand) {
+      flashButton(hand);
+      tryDefeat(hand);
+    }
+  });
+
+  // ボタンの色を一瞬変化させて、入力が反映されたことを視覚的に伝える
+  function flashButton(hand) {
+    const btn = handButtons[hand];
+    if (!btn) return;
+    btn.classList.add('pressed');
+    clearTimeout(btn.pressedTimerId);
+    btn.pressedTimerId = setTimeout(() => btn.classList.remove('pressed'), 120);
+  }
+
+  function tryDefeat(inputHand) {
+    if (!running) return;
+    // 判定対象は「落下中の敵のうち、一番進んでいる(一番下にいる)1体」だけ。
+    // 手の種類に関係なく、進み具合だけで選ぶ。
+    let target = null;
+    let bestProgress = -1;
+    activeHands.forEach(record => {
+      if (record.defeated) return;
+      // 経過時間ベースで落下の進み具合を計算(画面の実測位置は見ない)
+      const progress = (performance.now() - record.spawnTime) / record.fallDuration;
+      if (progress > bestProgress) {
+        bestProgress = progress;
+        target = record;
+      }
+    });
+
+    if (!target) {
+      if (combo !== 0) {
+        combo = 0;
+        updateHud();
+      }
+      return;
+    }
+
+    if (BEATS[target.hand] === inputHand) {
+      // 勝ち: 対象の敵を倒す
+      defeatHand(target);
+    } else if (target.hand === inputHand) {
+      // あいこ: 何も起きない(キャンセル音だけ鳴らす)
+      playCancelSound();
+    } else {
+      // 負け: 残機を1減らす
+      loseToTarget(target);
+    }
+  }
+
+  function loseToTarget(record) {
+    missCount += 1;
+    combo = 0;
+    lives -= 1;
+    playHitSound();
+    flashDamage();
+    updateHud();
+    if (lives <= 0) {
+      finishByLives();
+    }
+  }
+
+  function defeatHand(record) {
+    record.defeated = true;
+    clearTimeout(record.missTimerId);
+    // 撃破された瞬間、元の落下トランジションが動いたままにしておくと
+    // 「まだ動きながら消える」ように見えてしまうため、その場で位置を固定してから
+    // 撃破演出(グレースケール+拡大)に切り替える。
+    // getBoundingClientRectは使わず、出現からの経過時間で現在位置を計算する(重い再描画を避けるため)。
+    const progress = Math.min(1, (performance.now() - record.spawnTime) / record.fallDuration);
+    record.el.style.transition = 'none';
+    record.el.style.top = (progress * 100) + '%';
+    void record.el.offsetHeight; // 上のtransition解除を確実に反映させてから次のクラス変更に進む
+    record.el.classList.add('defeated');
+    setTimeout(() => {
+      record.el.remove();
+      laneOccupied[record.laneIndex] = false; // 消滅アニメーションが終わってからレーンを空ける(演出中に次の敵と重なるのを防ぐ)
+    }, 250);
+    activeHands = activeHands.filter(r => r !== record);
+    score += 1;
+    combo += 1;
+    if (combo > maxCombo) maxCombo = combo;
+    playRecoverySound();
+    updateHud();
+    checkClearGoal();
+  }
+
+  function onMiss(record) {
+    if (record.defeated) return;
+    record.el.remove();
+    activeHands = activeHands.filter(r => r !== record);
+    laneOccupied[record.laneIndex] = false; // レーンを空けて次の敵が出現できるようにする
+    lives -= 1;
+    missCount += 1;
+    combo = 0; // ミスするとコンボは途切れる
+    playHitSound();
+    flashDamage();
+    updateHud();
+    if (lives <= 0) {
+      finishByLives();
+    }
+  }
+
+  // ===== 終了判定 =====
+  function tick() {
+    if (!running) return;
+    elapsedMs += 100;
+
+    if (mode === 'survival') {
+      survivalTimeLeft = Math.max(0, 30 - Math.floor(elapsedMs / 1000));
+      updateHud();
+      if (survivalTimeLeft <= 0) {
+        endGame(`タイムアップ!倒した数: ${score}体${comboSummary()}`);
+      }
+    } else {
+      updateHud();
+    }
+  }
+
+  function checkClearGoal() {
+    if (mode === 'clear' && score >= CLEAR_GOAL) {
+      const seconds = (elapsedMs / 1000).toFixed(1);
+      playClearSound();
+      endGame(`クリア!30体倒すのにかかったタイム: ${seconds}秒${comboSummary()}`);
+    }
+  }
+
+  function finishByLives() {
+    if (mode === 'clear') {
+      endGame(`ミスが多すぎて失敗... 倒した数: ${score}体 / ${CLEAR_GOAL}体${comboSummary()}`);
+    } else if (mode === 'escalate') {
+      endGame(`ミス!ここまで倒した数: ${score}体${comboSummary()}`);
+    } else {
+      endGame(`残機が尽きました。倒した数: ${score}体${comboSummary()}`);
+    }
+  }
+
+  // 結果画面に添える「最大コンボ・ミス回数」の文言
+  function comboSummary() {
+    return `\n最大コンボ: ${maxCombo} / ミス回数: ${missCount}`;
+  }
+
+  // ===== HUD更新 =====
+  function updateHud() {
+    scoreDisplay.textContent = (mode === 'clear')
+      ? `スコア: ${score} / ${CLEAR_GOAL}`
+      : `スコア: ${score}`;
+    comboDisplay.textContent = `コンボ: ${combo}`;
+    comboDisplay.classList.toggle('combo-active', combo >= 3);
+    livesDisplay.textContent = '残機: ' + '❤️'.repeat(Math.max(0, lives));
+    if (mode === 'survival') {
+      timerDisplay.textContent = `残り: ${survivalTimeLeft}`;
+    } else {
+      timerDisplay.textContent = `経過: ${(elapsedMs / 1000).toFixed(1)}秒`;
+    }
+  }
+})();
+</script>
+</body>
+</html>
