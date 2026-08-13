@@ -236,7 +236,7 @@
       <button data-mode="clear">② 固定数クリア(30体を倒すタイムを競う)</button>
       <button data-mode="escalate">③ 難易度上昇(ミスするまで無限に加速)</button>
     </div>
-    <p id="version-display">v1</p>
+    <p id="version-display">v2</p>
   </div>
 
   <!-- ゲーム画面 -->
@@ -244,7 +244,7 @@
     <div id="hud">
       <span id="score-display">スコア: 0</span>
       <span id="timer-display">残り: 30</span>
-      <span id="lives-display">残機: ❤️❤️❤️</span>
+      <span id="lives-display">Life: ❤️❤️❤️</span>
       <span id="combo-display" class="combo-idle">コンボ: 0</span>
     </div>
     <div id="lanes">
@@ -437,6 +437,10 @@
 
   // ===== ゲーム開始 =====
   function startGame() {
+    // AudioContextの初回準備には時間がかかる(低速端末だと200ms超)ことがあるため、
+    // 最初のタップを待たずにここで先に準備しておく
+    getAudioCtx();
+
     // 状態リセット
     score = 0;
     lives = 10;
@@ -641,6 +645,7 @@
     playRecoverySound();
     if (combo % 10 === 0) {
       playComboMilestoneSound();
+      lives = Math.min(10, lives + 1); // コンボ節目でLifeを1回復(初期値の10が上限)
     }
     updateHud();
     checkClearGoal();
@@ -692,7 +697,7 @@
     } else if (mode === 'escalate') {
       endGame(`ミス!ここまで倒した数: ${score}体${comboSummary()}`);
     } else {
-      endGame(`残機が尽きました。倒した数: ${score}体${comboSummary()}`);
+      endGame(`Lifeが尽きました。倒した数: ${score}体${comboSummary()}`);
     }
   }
 
@@ -708,7 +713,7 @@
       : `スコア: ${score}`;
     comboDisplay.textContent = `コンボ: ${combo}`;
     comboDisplay.classList.toggle('combo-active', combo >= 3);
-    livesDisplay.textContent = '残機: ' + '❤️'.repeat(Math.max(0, lives));
+    livesDisplay.textContent = 'Life: ' + '❤️'.repeat(Math.max(0, lives));
     if (mode === 'survival') {
       timerDisplay.textContent = `残り: ${survivalTimeLeft}`;
     } else {
