@@ -28,6 +28,24 @@
 
   h1 { font-size: 1.4rem; margin-bottom: 0.5rem; }
   p.desc { color: #bbb; margin-bottom: 1.5rem; font-size: 0.9rem; }
+  .hard-enemy-note {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    margin-top: -1rem; /* 直前のdescとの間隔を詰める */
+  }
+  /* ゲーム中の硬い敵の縁取りと同じ見た目のサンプルアイコン */
+  .hard-sample {
+    display: inline-block;
+    width: 1.1rem;
+    height: 1.1rem;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: #3a4166;
+    border: 2px solid #ffd166;
+    box-shadow: 0 0 6px rgba(255, 209, 102, 0.7);
+  }
   #version-display { color: #666; font-size: 0.75rem; margin-top: 1.2rem; }
 
   button {
@@ -256,6 +274,7 @@
   <div id="start-screen" class="screen">
     <h1>ジャンケン迎撃タイムアタック</h1>
     <p class="desc">降ってくる手に「勝つ手」を出して迎撃しよう!<br>Zキー=グー / Xキー=チョキ / Cキー=パー(ボタンでも操作可)</p>
+    <p class="desc hard-enemy-note"><span class="hard-sample"></span>金色に光る敵は硬い敵!3回勝たないと倒せないので注意</p>
     <div class="speed-option">
       <label for="speed-slider">敵のスピード: <span id="speed-value">1.0</span>倍</label>
       <input type="range" id="speed-slider" min="0.2" max="2" step="0.2" value="1">
@@ -265,7 +284,7 @@
       <button data-mode="clear">② 固定数クリア(30体を倒すタイムを競う)</button>
       <button data-mode="escalate">③ 難易度上昇(ミスするまで無限に加速)</button>
     </div>
-    <p id="version-display">v3</p>
+    <p id="version-display">v4</p>
   </div>
 
   <!-- ゲーム画面 -->
