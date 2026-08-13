@@ -146,6 +146,35 @@
     to { transform: translate(-50%, 0) scale(1.8); }
   }
 
+  /* 硬い敵(3回勝たないと倒せない敵): 通常の手の画像に金色の縁取りを付けて区別する */
+  .falling-hand.hard img {
+    border: 2px solid #ffd166;
+    border-radius: 10px;
+    box-shadow: 0 0 6px rgba(255, 209, 102, 0.7);
+  }
+  /* 残り撃破回数を白い丸で表示する */
+  .hit-pips {
+    display: flex;
+    justify-content: center;
+    gap: 3px;
+    margin-top: 2px;
+  }
+  .hit-pips .pip {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 0 2px rgba(0, 0, 0, 0.6);
+  }
+  /* 硬い敵にダメージが入った瞬間、一瞬だけ光らせて手応えを伝える */
+  .falling-hand.hit-flash img {
+    animation: hitFlash 0.15s ease-out;
+  }
+  @keyframes hitFlash {
+    0% { filter: brightness(2.2); }
+    100% { filter: brightness(1); }
+  }
+
   /* 残機が減った(ダメージを受けた)時、敵ではなく画面の端が一瞬赤く光る */
   #damage-flash {
     position: fixed;
@@ -236,7 +265,7 @@
       <button data-mode="clear">② 固定数クリア(30体を倒すタイムを競う)</button>
       <button data-mode="escalate">③ 難易度上昇(ミスするまで無限に加速)</button>
     </div>
-    <p id="version-display">v2</p>
+    <p id="version-display">v3</p>
   </div>
 
   <!-- ゲーム画面 -->
@@ -280,6 +309,8 @@
   const HAND_IMAGES = { rock: 'gu.png', scissors: 'choki.png', paper: 'pa.png' };
   const KEY_TO_HAND = { KeyZ: 'rock', KeyX: 'scissors', KeyC: 'paper' };
   const HAND_LIST = ['rock', 'scissors', 'paper'];
+  const HARD_HITS_REQUIRED = 3;   // 硬い敵を倒すのに必要な勝利回数
+  const HARD_SPAWN_INTERVAL = 15000; // 硬い敵を出現させる間隔(ミリ秒)
 
   // ===== 効果音(音声ファイルを使わず、Web Audio APIでその場で音を生成する) =====
   let audioCtx = null;
@@ -373,6 +404,49 @@
     playTone(3600, 0.55, 0.3, 'sine', 0.22);          // 昇りきった頂点でキラッと光る仕上げの高音
   }
 
+  // ゲーム開始時: 「タラララッ」という短いファンファーレ(トランペットっぽい音色)
+  function playStartFanfareSound() {
+    playTone(523.25, 0,    0.12, 'sawtooth', 0.18);  // ド
+    playTone(659.25, 0.12, 0.12, 'sawtooth', 0.18);  // ミ
+    playTone(783.99, 0.24, 0.12, 'sawtooth', 0.18);  // ソ
+    playTone(1046.5, 0.36, 0.35, 'sawtooth', 0.22);  // 高いドを伸ばして締める
+    playTone(783.99, 0.36, 0.35, 'square', 0.08);    // 和音を薄く重ねて厚みを出す
+  }
+
+  // ゲーム終了時: 審判のホイッスルのような「ピーッ」という音(ビブラートで笛らしさを出す)
+  function playEndWhistleSound() {
+    const ctx = getAudioCtx();
+    const startTime = ctx.currentTime;
+    const duration = 0.5;
+
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(2600, startTime);
+    osc.frequency.linearRampToValueAtTime(2900, startTime + 0.05); // 吹き始めの一瞬の音程の跳ね上がり
+
+    // ホイッスル特有の細かい音の揺れ(ビブラート)をLFOで表現する
+    const vibrato = ctx.createOscillator();
+    vibrato.type = 'sine';
+    vibrato.frequency.setValueAtTime(18, startTime);
+    const vibratoGain = ctx.createGain();
+    vibratoGain.gain.setValueAtTime(40, startTime);
+    vibrato.connect(vibratoGain);
+    vibratoGain.connect(osc.frequency);
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, startTime);
+    gain.gain.exponentialRampToValueAtTime(0.22, startTime + 0.03);
+    gain.gain.setValueAtTime(0.22, startTime + duration - 0.1);
+    gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    vibrato.start(startTime);
+    osc.start(startTime);
+    vibrato.stop(startTime + duration);
+    osc.stop(startTime + duration);
+  }
+
   // ===== 画面要素 =====
   const startScreen = document.getElementById('start-screen');
   const gameScreen = document.getElementById('game-screen');
@@ -407,6 +481,7 @@
   let missCount = 0;  // このプレイ中にミスした回数
   let activeHands = [];   // 現在落下中の手
   let laneOccupied = [];  // 各レーンに敵がいるか(true/false)。重複出現を防ぐために使う
+  let nextHardSpawnAt = HARD_SPAWN_INTERVAL; // 次に硬い敵を出現させる経過時間(ms)
   let spawnTimerId = null;
   let tickTimerId = null;
   let running = false;
@@ -440,6 +515,7 @@
     // AudioContextの初回準備には時間がかかる(低速端末だと200ms超)ことがあるため、
     // 最初のタップを待たずにここで先に準備しておく
     getAudioCtx();
+    playStartFanfareSound();
 
     // 状態リセット
     score = 0;
@@ -449,6 +525,7 @@
     missCount = 0;
     activeHands = [];
     laneOccupied = lanes.length ? new Array(lanes.length).fill(false) : [];
+    nextHardSpawnAt = HARD_SPAWN_INTERVAL;
     elapsedMs = 0;
     survivalTimeLeft = 30;
     speedMultiplier = parseFloat(speedSlider.value); // タイトル画面のスライダーで選んだ速度倍率
@@ -470,6 +547,7 @@
   }
 
   function endGame(message) {
+    playEndWhistleSound();
     running = false;
     clearTimeout(spawnTimerId);
     clearInterval(tickTimerId);
@@ -504,11 +582,11 @@
     spawnTimerId = setTimeout(spawnLoop, spawnInterval);
   }
 
-  function spawnHand() {
+  function spawnHand(isHard) {
     // 既に敵がいるレーンには出現させない(重なって見えなくなるのを防ぐ)
     const freeLanes = [];
     laneOccupied.forEach((occupied, idx) => { if (!occupied) freeLanes.push(idx); });
-    if (freeLanes.length === 0) return; // 全レーンが埋まっていたら今回は出現させない
+    if (freeLanes.length === 0) return false; // 全レーンが埋まっていたら今回は出現させない
 
     const laneIndex = freeLanes[Math.floor(Math.random() * freeLanes.length)];
     // 空きレーンを確認した時点でこのレーンを予約しておく
@@ -522,11 +600,25 @@
 
       const hand = HAND_LIST[Math.floor(Math.random() * HAND_LIST.length)];
       const el = document.createElement('div');
-      el.className = 'falling-hand';
+      el.className = 'falling-hand' + (isHard ? ' hard' : '');
       const img = document.createElement('img');
       img.src = HAND_IMAGES[hand];
       img.alt = hand;
       el.appendChild(img);
+
+      let pipsEl = null;
+      if (isHard) {
+        // 硬い敵は、残り撃破回数を白い丸(pip)で画像の下に表示する
+        pipsEl = document.createElement('div');
+        pipsEl.className = 'hit-pips';
+        for (let i = 0; i < HARD_HITS_REQUIRED; i++) {
+          const pip = document.createElement('span');
+          pip.className = 'pip';
+          pipsEl.appendChild(pip);
+        }
+        el.appendChild(pipsEl);
+      }
+
       el.style.transition = `top ${fallDuration}ms linear`;
       lanes[laneIndex].appendChild(el);
 
@@ -540,10 +632,16 @@
       // spawnTime/fallDurationを記録しておき、当たり判定の優先度は
       // getBoundingClientRect(強制的に再描画計算をさせる重い処理)を使わず、
       // 経過時間だけで計算できるようにする(連打時の描画詰まり対策)
-      const record = { hand, el, laneIndex, defeated: false, spawnTime: performance.now(), fallDuration };
+      const record = {
+        hand, el, laneIndex, defeated: false,
+        spawnTime: performance.now(), fallDuration,
+        hitsRemaining: isHard ? HARD_HITS_REQUIRED : 1, pipsEl
+      };
       record.missTimerId = setTimeout(() => onMiss(record), fallDuration);
       activeHands.push(record);
     }, 250);
+
+    return true;
   }
 
   // ===== 入力処理 =====
@@ -623,6 +721,19 @@
   }
 
   function defeatHand(record) {
+    record.hitsRemaining -= 1;
+    if (record.hitsRemaining > 0) {
+      // まだ倒しきれていない(硬い敵): 白い残数を1つ消し、光らせて手応えを伝えるだけで
+      // その場に留める(スコア・コンボはまだ加算しない)
+      playRecoverySound();
+      if (record.pipsEl && record.pipsEl.firstElementChild) {
+        record.pipsEl.firstElementChild.remove();
+      }
+      record.el.classList.add('hit-flash');
+      setTimeout(() => record.el.classList.remove('hit-flash'), 150);
+      return;
+    }
+
     record.defeated = true;
     clearTimeout(record.missTimerId);
     // 撃破された瞬間、元の落下トランジションが動いたままにしておくと
@@ -671,6 +782,15 @@
   function tick() {
     if (!running) return;
     elapsedMs += 100;
+
+    // 15秒経過するごとに、3回勝たないと倒せない硬い敵を出現させる
+    // (レーンが全部埋まっていて出現できなかった場合は、次のtickで空くまで再挑戦する)
+    if (elapsedMs >= nextHardSpawnAt) {
+      const alreadyAtClearGoal = mode === 'clear' && score + activeHands.length >= CLEAR_GOAL;
+      if (!alreadyAtClearGoal && spawnHand(true)) {
+        nextHardSpawnAt += HARD_SPAWN_INTERVAL;
+      }
+    }
 
     if (mode === 'survival') {
       survivalTimeLeft = Math.max(0, 30 - Math.floor(elapsedMs / 1000));
