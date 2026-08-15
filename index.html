@@ -164,6 +164,21 @@
     to { transform: translate(-50%, 0) scale(1.8); }
   }
 
+  /* 今狙うべき敵(判定対象)を示す矢印。落下中の対象の少し上に表示し、位置を追従させる */
+  .target-arrow {
+    position: absolute;
+    left: 0;
+    top: 0;
+    transform: translate(-50%, 0);
+    font-size: 1.3rem;
+    line-height: 1;
+    color: #ffd166;
+    text-shadow: 0 0 6px rgba(255, 209, 102, 0.9);
+    pointer-events: none;
+    transition: left 0.15s ease, top 0.1s linear;
+    z-index: 4;
+  }
+
   /* 硬い敵(3回勝たないと倒せない敵): 通常の手の画像に金色の縁取りを付けて区別する */
   .falling-hand.hard img {
     border: 2px solid #ffd166;
@@ -284,7 +299,7 @@
       <button data-mode="clear">② 固定数クリア(30体を倒すタイムを競う)</button>
       <button data-mode="escalate">③ 難易度上昇(ミスするまで無限に加速)</button>
     </div>
-    <p id="version-display">v4</p>
+    <p id="version-display">v5</p>
   </div>
 
   <!-- ゲーム画面 -->
@@ -300,6 +315,7 @@
       <div class="lane" data-lane="1"></div>
       <div class="lane" data-lane="2"></div>
       <div id="judge-line"></div>
+      <div id="target-arrow" class="target-arrow hidden">▼</div>
     </div>
     <div id="input-buttons">
       <button data-hand="rock"><img src="gu.png" alt="グー"><span class="key-label">Z</span></button>
@@ -470,7 +486,9 @@
   const startScreen = document.getElementById('start-screen');
   const gameScreen = document.getElementById('game-screen');
   const resultScreen = document.getElementById('result-screen');
+  const lanesContainer = document.getElementById('lanes');
   const lanes = document.querySelectorAll('.lane');
+  const targetArrowEl = document.getElementById('target-arrow');
   const scoreDisplay = document.getElementById('score-display');
   const comboDisplay = document.getElementById('combo-display');
   const livesDisplay = document.getElementById('lives-display');
@@ -617,6 +635,9 @@
     setTimeout(() => {
       if (!running) return; // 待っている間にゲームが終わっていたら出現させない
 
+      // 硬い敵は、通常の敵の半分の速度(=落下にかかる時間を2倍)で落下させる
+      const thisFallDuration = isHard ? fallDuration * 2 : fallDuration;
+
       const hand = HAND_LIST[Math.floor(Math.random() * HAND_LIST.length)];
       const el = document.createElement('div');
       el.className = 'falling-hand' + (isHard ? ' hard' : '');
@@ -638,7 +659,7 @@
         el.appendChild(pipsEl);
       }
 
-      el.style.transition = `top ${fallDuration}ms linear`;
+      el.style.transition = `top ${thisFallDuration}ms linear`;
       lanes[laneIndex].appendChild(el);
 
       // 端末によっては、追加した要素が一度も描画されないまま次の処理に進んでしまうことがあるため、
@@ -653,10 +674,10 @@
       // 経過時間だけで計算できるようにする(連打時の描画詰まり対策)
       const record = {
         hand, el, laneIndex, defeated: false,
-        spawnTime: performance.now(), fallDuration,
+        spawnTime: performance.now(), fallDuration: thisFallDuration,
         hitsRemaining: isHard ? HARD_HITS_REQUIRED : 1, pipsEl
       };
-      record.missTimerId = setTimeout(() => onMiss(record), fallDuration);
+      record.missTimerId = setTimeout(() => onMiss(record), thisFallDuration);
       activeHands.push(record);
     }, 250);
 
@@ -691,10 +712,9 @@
     btn.pressedTimerId = setTimeout(() => btn.classList.remove('pressed'), 120);
   }
 
-  function tryDefeat(inputHand) {
-    if (!running) return;
-    // 判定対象は「落下中の敵のうち、一番進んでいる(一番下にいる)1体」だけ。
-    // 手の種類に関係なく、進み具合だけで選ぶ。
+  // 判定対象(=矢印で示す対象)は「落下中の敵のうち、一番進んでいる(一番下にいる)1体」だけ。
+  // 手の種類に関係なく、進み具合だけで選ぶ。
+  function getActiveTarget() {
     let target = null;
     let bestProgress = -1;
     activeHands.forEach(record => {
@@ -706,6 +726,12 @@
         target = record;
       }
     });
+    return target;
+  }
+
+  function tryDefeat(inputHand) {
+    if (!running) return;
+    const target = getActiveTarget();
 
     if (!target) {
       if (combo !== 0) {
@@ -797,10 +823,27 @@
     }
   }
 
+  // 今狙うべき敵(判定対象)の少し上に矢印を表示し、対象が変わるたびに追従させる
+  function updateTargetArrow() {
+    const target = getActiveTarget();
+    if (!target) {
+      targetArrowEl.classList.add('hidden');
+      return;
+    }
+    const progress = Math.min(1, (performance.now() - target.spawnTime) / target.fallDuration);
+    const laneEl = lanes[target.laneIndex];
+    const leftPx = laneEl.offsetLeft + laneEl.offsetWidth / 2;
+    const topPx = Math.max(0, progress * lanesContainer.clientHeight - 22); // 敵の少し上に表示
+    targetArrowEl.style.left = leftPx + 'px';
+    targetArrowEl.style.top = topPx + 'px';
+    targetArrowEl.classList.remove('hidden');
+  }
+
   // ===== 終了判定 =====
   function tick() {
     if (!running) return;
     elapsedMs += 100;
+    updateTargetArrow();
 
     // 15秒経過するごとに、3回勝たないと倒せない硬い敵を出現させる
     // (レーンが全部埋まっていて出現できなかった場合は、次のtickで空くまで再挑戦する)
